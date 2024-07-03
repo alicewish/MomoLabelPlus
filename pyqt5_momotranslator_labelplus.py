@@ -40,7 +40,6 @@ from numpy import array, clip, fromfile, ndarray, ones, uint8
 from prettytable import PrettyTable
 from psutil import virtual_memory
 from qtawesome import icon as qicon
-from ruamel.yaml import YAML
 
 python_ver = python_version()
 
@@ -1057,62 +1056,6 @@ def save_rlp(rlp_txt, rlp_para_dic, img_list):
     write_txt(rlp_txt, rlp_text)
 
 
-class AppConfig:
-    # 设置默认配置文件路径和用户配置文件路径
-    default_config_yml = UserDataFolder / f'{APP_NAME}_config.yml'
-    if python_ver in ['3.11.8']:
-        user_config_yml = UserDataFolder / f'{APP_NAME}_{processor_name}_{ram}GB_anaconda_config.yml'
-    else:
-        user_config_yml = UserDataFolder / f'{APP_NAME}_{processor_name}_{ram}GB_config.yml'
-    master_config_yml = ProgramFolder / f'{APP_NAME}_master_config.yml'
-    logger.debug(f'当前用户配置文件名为：{user_config_yml.name}')
-
-    def __init__(self, config_file, config_data):
-        # 初始化时设置配置文件路径，并加载配置数据
-        self.config_file = Path(config_file)
-        self.yaml = YAML()
-        self.yaml.indent(mapping=2, sequence=4, offset=2)
-        self.config_data = config_data
-
-    @classmethod
-    def load(cls):
-        # 加载配置文件。如果用户配置文件不存在，则复制默认配置文件
-        config_file = cls.user_config_yml
-        if not config_file.exists():
-            copy2(cls.default_config_yml, config_file)
-
-        # 使用 ruamel.yaml 来读取配置文件，因为它可以保留文件中的注释和顺序
-        yaml = YAML()
-        yaml.indent(mapping=2, sequence=4, offset=2)
-        with open(cls.user_config_yml, mode='r', encoding='utf-8') as yf:
-            config_data = yaml.load(yf)
-
-        if cls.master_config_yml.exists():
-            with open(cls.master_config_yml, mode='r', encoding='utf-8') as yf:
-                master_cfg = yaml.load(yf)
-            config_data.update(master_cfg)
-        return cls(config_file, config_data)
-
-    def get(self, key, default_value=None):
-        # 获取指定配置项的值，如果没有找到，则返回默认值
-        return self.config_data.get(key, default_value)
-
-    def set(self, key, value):
-        # 设置指定配置项的值，并保存到配置文件中
-        self.config_data[key] = value
-        self.save()
-
-    def save(self):
-        # 保存配置数据到配置文件
-        try:
-            with self.config_file.open('w') as f:
-                self.yaml.dump(self.config_data, f)
-        except IOError as e:
-            logger.error(f'保存配置文件时出错：{e}')
-        else:
-            logger.info(f'成功保存配置文件到 {self.config_file}')
-
-
 class SearchLine(QLineEdit):
     def __init__(self, parent=None):
         super(SearchLine, self).__init__(parent)
@@ -1531,9 +1474,12 @@ class LabelPlusWindow(QMainWindow):
         self.rlp_para_dic = read_rlp(self.rlp_txt, self.img_list)
         self.filter_img_list = self.img_list
         self.img_ind = clamp(img_ind, 0, len(self.img_list) - 1)
-        self.img_file = self.img_list[self.img_ind]
         self.bubble_ellipses = []
-        self.setWindowTitle(self.img_file.name)
+        if self.img_ind < len(self.img_list):
+            self.img_file = self.img_list[self.img_ind]
+            self.setWindowTitle(self.img_file.name)
+        else:
+            self.img_file = None
 
     def a2_status_bar(self):
         # ================状态栏================
@@ -1741,30 +1687,31 @@ class LabelPlusWindow(QMainWindow):
         loop.exec_()
 
     def open_img_by_path(self, img_file):
-        img_file = Path(img_file)
-        if img_file.exists() and img_file != self.cgs.img_file:
-            self.img_file = img_file
-            self.formatted_stem = get_formatted_stem(self.img_file)
-            self.img_file_size = getsize(self.img_file)
-            self.img_ind = self.img_list.index(self.img_file)
-            self.setWindowTitle(self.img_file.name)
-            # ================显示图片================
-            self.img_raw = imdecode(fromfile(self.img_file, dtype=uint8), -1)
-            self.ih, self.iw = self.img_raw.shape[0:2]
-            self.cgs.load_qimg(self.img_raw, self.img_file)
-            self.scale_by_percent()
-            self.update_zoom_label()
-            # ================将当前图片项设为选中状态================
-            self.cil.blockSignals(True)  # 阻止信号
-            self.cil.setCurrentRow(self.img_ind)
-            self.cil.blockSignals(False)  # 恢复信号
-            # ================更新状态栏信息================
-            index_str = f'{self.img_ind + 1}/{len(self.img_list)}'
-            meta_str = f'{self.tr("Width")}: {self.iw} {self.tr("Height")}: {self.ih} | {self.tr("File Size")}: {self.img_file_size} bytes'
-            status_text = f'{index_str} | {self.tr("Filnename")}: {self.img_file.name} | {meta_str}'
-            self.status_bar.showMessage(status_text)
-            QApplication.processEvents()
-            self.open_lp_bubbles()
+        if img_file is not None:
+            img_file = Path(img_file)
+            if img_file.exists() and img_file != self.cgs.img_file:
+                self.img_file = img_file
+                self.formatted_stem = get_formatted_stem(self.img_file)
+                self.img_file_size = getsize(self.img_file)
+                self.img_ind = self.img_list.index(self.img_file)
+                self.setWindowTitle(self.img_file.name)
+                # ================显示图片================
+                self.img_raw = imdecode(fromfile(self.img_file, dtype=uint8), -1)
+                self.ih, self.iw = self.img_raw.shape[0:2]
+                self.cgs.load_qimg(self.img_raw, self.img_file)
+                self.scale_by_percent()
+                self.update_zoom_label()
+                # ================将当前图片项设为选中状态================
+                self.cil.blockSignals(True)  # 阻止信号
+                self.cil.setCurrentRow(self.img_ind)
+                self.cil.blockSignals(False)  # 恢复信号
+                # ================更新状态栏信息================
+                index_str = f'{self.img_ind + 1}/{len(self.img_list)}'
+                meta_str = f'{self.tr("Width")}: {self.iw} {self.tr("Height")}: {self.ih} | {self.tr("File Size")}: {self.img_file_size} bytes'
+                status_text = f'{index_str} | {self.tr("Filnename")}: {self.img_file.name} | {meta_str}'
+                self.status_bar.showMessage(status_text)
+                QApplication.processEvents()
+                self.open_lp_bubbles()
         QApplication.processEvents()
 
     def open_lp_bubbles(self):
@@ -2100,9 +2047,6 @@ def z():
 
 
 if __name__ == "__main__":
-    Comic = homedir / 'Comic'
-    Hanhua = Comic / '汉化'
-
     MomoHanhua = DOCUMENTS / '默墨汉化'
     Auto = MomoHanhua / 'Auto'
     Log = MomoHanhua / 'Log'
@@ -2111,16 +2055,6 @@ if __name__ == "__main__":
     MangaProcess = MomoHanhua / 'MangaProcess'  # 日漫
     ManhuaProcess = MomoHanhua / 'ManhuaProcess'  # 国漫
     ManhwaProcess = MomoHanhua / 'ManhwaProcess'  # 韩漫
-    Storage = MomoHanhua / 'Storage'
-
-    MomoYolo = DOCUMENTS / '默墨智能'
-    ChatGPT = MomoYolo / 'ChatGPT'
-
-    AutomateUserDataFolder = ProgramFolder / 'MomoAutomateUserData'
-    ChatGPTApp = AutomateUserDataFolder / 'ChatGPTApp'
-
-    make_dir(Comic)
-    make_dir(Hanhua)
 
     make_dir(MomoHanhua)
     make_dir(Auto)
@@ -2130,10 +2064,6 @@ if __name__ == "__main__":
     make_dir(MangaProcess)
     make_dir(ManhuaProcess)
     make_dir(ManhwaProcess)
-    make_dir(Storage)
-
-    make_dir(MomoYolo)
-    make_dir(ChatGPT)
 
     date_str = strftime('%Y_%m_%d')
     log_path = Log / f'日志-{date_str}.log'
@@ -2150,10 +2080,6 @@ if __name__ == "__main__":
         # format="<green>{time}</green> <level>{message}</level>",
     )
 
-    CTD_onnx = Storage / 'comictextdetector.pt.onnx'
-    CTD_model = None
-    uoln = None
-
     # ================选择语言================
     # 不支持使用软件期间重选语言
     # 因为界面代码是手写的，没有 retranslateUi
@@ -2163,94 +2089,33 @@ if __name__ == "__main__":
     # lang_code = 'ja_JP'
     qm_path = UserDataFolder / f'{APP_NAME}_{lang_code}.qm'
 
-    do_qt_translate = False
-    do_qt = False
-    do_dev_folder = False
-    do_dev_pic = False
-    do_requirements = False
-    do_structure = False
-    do_roi = False
-
-    mode_list = [
-        'do_qt_translate',
-        'do_qt',
-        'do_dev_folder',
-        'do_dev_pic',
-        'do_requirements',
-        'do_structure',
-        'do_roi',
-    ]
-
 
     def steps():
         pass
 
 
-    app_config = AppConfig.load()
-
-    do_mode = app_config.config_data['do_mode']
-    img_ind = app_config.config_data['img_ind']
-    step_str = app_config.config_data['step_str']
-    media_type = app_config.config_data['media_type']
-    text_direction = app_config.config_data['text_direction']
-    if text_direction is None:
-        if media_type in ['Comic', 'Manhua', 'Manhwa']:
-            text_direction = 'Horizontal'
-        else:
-            text_direction = 'Vertical'
-    if text_direction == 'Horizontal':
-        text_alignment = 'Center'
-    else:  # text_direction == 'Vertical'
-        text_alignment = 'Left'
-    hit_enter = app_config.config_data['hit_enter']
-    use_pivot_split = app_config.config_data['use_pivot_split']
-    bbox_type = app_config.config_data['bbox_type']
-    better_data = app_config.config_data['better_data']
-    force_trad = app_config.config_data['force_trad']
-    punc_type = app_config.config_data['punc_type']
-    enable_lettering = app_config.config_data['enable_lettering']
-    lettering_type = app_config.config_data['lettering_type']
-    default_chara = app_config.config_data['default_chara']
-    default_dpi = app_config.config_data['default_dpi']
-    custom_dpi = app_config.config_data['custom_dpi']
-    hide_extra = app_config.config_data['hide_extra']
-    print_type = app_config.config_data['print_type']
-    docx_img_format = app_config.config_data['docx_img_format']
-    folder_name = app_config.config_data['folder_name']
-    area_folder_names = app_config.config_data['area_folder_names']
-    thumb_size = app_config.config_data['thumb_size']
-    window_size = app_config.config_data['window_size']
+    img_ind = 0
+    media_type = 'Manga'
+    hide_extra = True
+    print_type = 'pprint'
+    folder_name = 'your_folder_name'
+    thumb_size = 240
+    window_size = '1200,800'
     if ',' in str(window_size):
-        sizes = window_size.split(',')
-        sizes = [int(x) for x in sizes]
-        window_w, window_h = sizes
+        window_w, par, window_h = window_size.partition(',')
+        window_w = int(window_w)
+        window_h = int(window_h)
     else:
         window_w = window_h = window_size
 
-    for dmode in mode_list:
-        globals()[dmode] = (do_mode == dmode)
-
     ProcessDir = MomoHanhua / f'{media_type}Process'
     img_folder = ProcessDir / folder_name
-
-    auto_subdir = Auto / img_folder.name
-    make_dir(auto_subdir)
 
     img_list = get_valid_imgs(img_folder)
     img_stems = [x.stem for x in img_list]
     cpre = common_prefix(img_stems)
     csuf = common_suffix(img_stems)
     all_masks = get_valid_imgs(img_folder, vmode='mask')
-
-    # ================获取漫画名================
-    series4file = folder_name
-    m_issue_w_dot = p_issue_w_dot.match(folder_name)
-    if m_issue_w_dot:
-        series4file = m_issue_w_dot.group(1)
-        issue = m_issue_w_dot.group(2)
-
-    # rlp_txt = img_folder.parent / f'{img_folder.name}翻译_0.txt'
-    # rlp_para_dic = read_rlp(rlp_txt, img_list)
 
     appgui = QApplication(sys.argv)
     translator = QTranslator()
