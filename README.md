@@ -11,7 +11,15 @@
 
 ## 使用
 
-在命令行中，进入到项目文件夹并运行`pyqt5_momotranslator_labelplus.py`文件：
+在命令行中，进入到项目文件夹
+
+运行`install_requirements.py`文件：
+
+```bash
+python install_requirements.py
+```
+
+运行`pyqt5_momotranslator_labelplus.py`文件：
 
 ```bash
 python pyqt5_momotranslator_labelplus.py
