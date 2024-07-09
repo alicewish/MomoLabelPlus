@@ -3,9 +3,9 @@ import os
 import os.path
 import re
 import sys
+from ast import Import, ImportFrom, parse, unparse, walk
 from collections import OrderedDict
-from csv import writer, QUOTE_MINIMAL
-from filecmp import cmp
+from csv import QUOTE_MINIMAL, writer
 from functools import partial, wraps
 from getpass import getuser
 from hashlib import md5
@@ -22,16 +22,16 @@ from traceback import print_exc
 from unicodedata import normalize
 from uuid import getnode
 
-import yaml
+import pkg_resources
 from PIL import Image
-from PyQt6.QtCore import QEventLoop, QTimer, QItemSelectionModel, QSize, Qt, pyqtSignal, QTranslator, QPoint
-from PyQt6.QtGui import QAction, QActionGroup, QBrush, QDoubleValidator, QFont, QIcon, QImage, \
-    QKeySequence, QPainter, QPixmap, QStandardItemModel, QColor, QPen, QStandardItem
-from PyQt6.QtWidgets import QAbstractItemView, QApplication, QDockWidget, QFileDialog, QGraphicsSceneMouseEvent, \
-    QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QLineEdit, QListView, \
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QStatusBar, \
-    QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget, QFrame, QHeaderView, QPlainTextEdit, QSizePolicy, \
-    QTableView, QGraphicsTextItem, QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup, QStyledItemDelegate
+from PyQt6.QtCore import QEventLoop, QItemSelectionModel, QPoint, QSize, QTimer, QTranslator, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QActionGroup, QBrush, QColor, QDoubleValidator, QFont, QIcon, QImage, QKeySequence, \
+    QPainter, QPen, QPixmap, QStandardItem, QStandardItemModel
+from PyQt6.QtWidgets import QAbstractItemView, QApplication, QDockWidget, QFileDialog, QFrame, QGraphicsEllipseItem, \
+    QGraphicsItem, QGraphicsItemGroup, QGraphicsScene, QGraphicsSceneMouseEvent, QGraphicsTextItem, QGraphicsView, \
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, \
+    QPlainTextEdit, QSizePolicy, QStatusBar, QStyledItemDelegate, QTabWidget, QTableView, QToolBar, QToolButton, \
+    QVBoxLayout, QWidget
 from cv2 import COLOR_BGR2RGB, COLOR_BGRA2BGR, COLOR_GRAY2BGR, COLOR_RGB2BGR, cvtColor, imdecode, imencode
 from loguru import logger
 from matplotlib import colormaps
@@ -40,6 +40,7 @@ from numpy import array, clip, fromfile, ndarray, ones, uint8
 from prettytable import PrettyTable
 from psutil import virtual_memory
 from qtawesome import icon as qicon
+from stdlib_list import stdlib_list
 
 python_ver = python_version()
 
@@ -662,33 +663,6 @@ def write_pic(pic_path, picimg):
     return pic_path
 
 
-# #@logger.catch
-def write_docx(docx_path, docu):
-    temp_docx = docx_path.parent / 'temp.docx'
-    if docx_path.exists():
-        docu.save(temp_docx)
-        if md5_w_size(temp_docx) != md5_w_size(docx_path):
-            copy2(temp_docx, docx_path)
-        if temp_docx.exists():
-            os.remove(temp_docx)
-    else:
-        docu.save(docx_path)
-
-
-def write_yml(yml_path, data):
-    temp_yml = yml_path.parent / 'temp.yml'
-    if yml_path.exists():
-        with open(temp_yml, 'w', encoding='utf-8') as temp_file:
-            yaml.dump(data, temp_file, default_flow_style=False, allow_unicode=True)
-        if not cmp(temp_yml, yml_path):
-            copy2(temp_yml, yml_path)
-        if temp_yml.exists():
-            os.remove(temp_yml)
-    else:
-        with open(yml_path, 'w', encoding='utf-8') as yaml_file:
-            yaml.dump(data, yaml_file, default_flow_style=False, allow_unicode=True)
-
-
 def common_prefix(strings):
     """
     返回字符串列表中的共同前缀。
@@ -856,6 +830,152 @@ def get_search_regex(search_text, case_sensitive, whole_word, use_regex):
 # ================================图像函数区================================
 def a9_dev():
     return
+
+
+@logger.catch
+def get_form_from_imports(bos, package_name, wrong_starts):
+    from_dict = {}
+    form_froms = []
+    form_imports = []
+
+    # 简化
+    froms = [x for x in bos if x.startswith('from ')]
+    imports = [x for x in bos if not x.startswith('from ')]
+
+    for f in range(len(froms)):
+        fro = froms[f]
+        fro = fro.removeprefix('from ')
+        lib, par, defs = fro.partition(' import ')
+        if lib not in from_dict:
+            from_dict[lib] = []
+        from_dict[lib].append(defs)
+
+    for key in from_dict:
+        val = from_dict[key]
+
+        # 连起来
+        def_str = ', '.join(val)
+        # 再分开
+        defs = def_str.split(',')
+        # 删除多余空白符号
+        defs = [x.strip('\f\t ') for x in defs]
+        # 去重
+        defs = reduce_list(defs)
+        # 排序
+        defs.sort()
+
+        if len(defs) >= 2 and '*' in defs:
+            defs = [x for x in defs if x != '*']
+        def_norm = [x for x in defs if ' as ' not in x]
+        def_as = [x for x in defs if ' as ' in x]
+        defs = def_norm + def_as
+
+        if def_norm:
+            defs_norm_str = ', '.join(def_norm)
+            form_from = f'from {key} import ' + defs_norm_str
+            if wrong_starts and key.lower().startswith(wrong_starts):
+                pass
+            else:
+                form_froms.append(form_from)
+
+        if def_as:
+            defs_as_str = ', '.join(def_as)
+            form_from = f'from {key} import ' + defs_as_str
+            form_froms.append(form_from)
+
+    for i in range(len(imports)):
+        impor = imports[i]
+        impor = impor.removeprefix('import ')
+        impos = impor.split(',')
+        impos = [x.strip() for x in impos]
+        for m in range(len(impos)):
+            impo = impos[m]
+            form_import = f'import {impo}'
+            form_imports.append(form_import)
+
+    # 去重
+    form_imports = reduce_list(form_imports)
+    if package_name:
+        form_imports = [x for x in form_imports if not x.startswith(package_name)]
+    # 排序
+    form_imports.sort()
+
+    form_from_imports = form_froms + form_imports
+    return form_from_imports
+
+
+def sort_libs(src_py_file):
+    logger.info(f'{src_py_file=}')
+    if src_py_file.exists():
+        py_text = read_txt(src_py_file)
+        py_text = py_text.strip('\r\n\t\f ')
+        try:
+            p_node = parse(py_text)
+            body = p_node.body
+        except Exception as e:
+            printe(e)
+
+        import_bods = []
+        import_bos = []
+        lib_names = []
+        for b in range(len(body)):
+            bod = body[b]
+            # logger.info(f'{bod}')
+
+            # get back the source code
+            bo = unparse(bod)
+            bo = bo.strip('\r\n\t\f ')
+
+            if type(bod) in (ImportFrom, Import):
+                if type(bod) == Import:
+                    lib_name = bod.names[0].name
+                else:
+                    lib_name = bod.module
+                import_bods.append(bod)
+                import_bos.append(bo)
+                lib_names.append(lib_name)
+        reformed_list = get_form_from_imports(import_bos, None, None)
+        reformed_str = lf.join(reformed_list)
+        print(reformed_str)
+
+
+# @logger.catch
+@timer_decorator
+def generate_requirements(py_path, python_vs):
+    """
+    生成给定Python文件中使用的非标准库的列表。
+
+    :param py_path: 要分析的Python文件的路径。
+    :param python_vs: Python版本的元组，默认为当前Python版本。
+    :return: requirements文本内容
+    """
+    # 获取已安装的包及其版本
+    installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
+    # 获取标准库模块列表
+    stdlib_modules = set(stdlib_list(python_vs))
+
+    # 读取Python文件并解析语法树
+    py_text = read_txt(py_path)
+    root = parse(py_text)
+
+    imports = []
+    # 遍历语法树，提取import语句
+    for node in walk(root):
+        if isinstance(node, Import):
+            imports.extend([alias.name for alias in node.names])
+        elif isinstance(node, ImportFrom):
+            if node.level == 0:
+                imports.append(node.module)
+    imported_modules = set(imports)
+    requirements = []
+
+    # 对于导入的每个模块，检查是否为非标准库模块
+    for module in imported_modules:
+        if module in installed_packages and module not in stdlib_modules:
+            requirements.append(module)
+    requirements.sort()
+    requirements_text = lf.join(requirements)
+    return requirements_text
 
 
 def open_in_viewer(file_path):
@@ -1054,6 +1174,30 @@ def save_rlp(rlp_txt, rlp_para_dic, img_list):
         rlp_lines.append('')
     rlp_text = lf.join(rlp_lines)
     write_txt(rlp_txt, rlp_text)
+
+
+def get_rlp_pic_bubbles(table_data, iw, ih):
+    rlp_pic_bubbles = []
+    for t in range(len(table_data)):
+        row_data = table_data[t]
+        id, content, group_str, coor_str = row_data
+        if group_str == 'G1框内':
+            group = 1
+        elif group_str == 'G2框外':
+            group = 2
+        else:
+            group = 1
+        x_str, par, y_str = coor_str.partition(',')
+        coor_x = int(x_str) / iw
+        coor_y = int(y_str) / ih
+        rlp_pic_bubble = {}
+        rlp_pic_bubble['id'] = id
+        rlp_pic_bubble['coor_x'] = coor_x
+        rlp_pic_bubble['coor_y'] = coor_y
+        rlp_pic_bubble['group'] = group
+        rlp_pic_bubble['content'] = content
+        rlp_pic_bubbles.append(rlp_pic_bubble)
+    return rlp_pic_bubbles
 
 
 class SearchLine(QLineEdit):
@@ -1772,8 +1916,12 @@ class LabelPlusWindow(QMainWindow):
         current_index = self.plus_tv_sm.currentIndex()
         if current_index.isValid():
             row = current_index.row()
-            content = self.plus_tv_im.item(row, 1).text()
-            self.plus_pte.setPlainText(content)
+            cell = self.plus_tv_im.item(row, 1)
+            if cell:
+                content = cell.text()
+                self.plus_pte.setPlainText(content)
+            else:
+                self.plus_pte.setPlainText('')
         else:
             self.plus_pte.setPlainText('')
 
@@ -1996,7 +2144,7 @@ class LabelPlusWindow(QMainWindow):
             data_list.append(row_data)
         return data_list
 
-    def save2lp(self):
+    def save1page(self):
         self.formatted_stem = get_formatted_stem(self.img_file)
         table_data = self.get_table_data()
         if print_type == 'pprint':
@@ -2011,28 +2159,11 @@ class LabelPlusWindow(QMainWindow):
                 table.add_row(row_data)
             # 打印表格
             print(table)
-
-        rlp_pic_bubbles = []
-        for t in range(len(table_data)):
-            row_data = table_data[t]
-            id, content, group_str, coor_str = row_data
-            if group_str == 'G1框内':
-                group = 1
-            elif group_str == 'G2框外':
-                group = 2
-            else:
-                group = 1
-            x_str, par, y_str = coor_str.partition(',')
-            coor_x = int(x_str) / self.iw
-            coor_y = int(y_str) / self.ih
-            rlp_pic_bubble = {}
-            rlp_pic_bubble['id'] = id
-            rlp_pic_bubble['coor_x'] = coor_x
-            rlp_pic_bubble['coor_y'] = coor_y
-            rlp_pic_bubble['group'] = group
-            rlp_pic_bubble['content'] = content
-            rlp_pic_bubbles.append(rlp_pic_bubble)
+        rlp_pic_bubbles = get_rlp_pic_bubbles(table_data, self.iw, self.ih)
         self.rlp_para_dic[self.formatted_stem] = rlp_pic_bubbles
+
+    def save2lp(self):
+        self.save1page()
         save_rlp(self.rlp_txt, self.rlp_para_dic, self.img_list)
 
 
@@ -2107,6 +2238,10 @@ if __name__ == "__main__":
         window_h = int(window_h)
     else:
         window_w = window_h = window_size
+
+    # sort_libs(py_path)
+    # requirements_text = generate_requirements(py_path, python_vs)
+    # print(requirements_text)
 
     ProcessDir = MomoHanhua / f'{media_type}Process'
     img_folder = ProcessDir / folder_name

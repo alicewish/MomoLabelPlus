@@ -8,16 +8,21 @@
 
 简体中文 | [English](README_EN.md)
 
+## 安装
+
+首先，确保您的计算机上已安装Python 3.10。您可以通过在命令行输入以下命令来检查Python版本：
+```bash
+python --version
+```
+
+克隆此存储库或下载ZIP文件并解压缩。
+
+使用以下命令安装必需的Python库：
+```bash
+pip install -r requirements.txt
+```
 
 ## 使用
-
-在命令行中，进入到项目文件夹
-
-运行`install_requirements.py`文件：
-
-```bash
-python install_requirements.py
-```
 
 运行`pyqt5_momotranslator_labelplus.py`文件：
 
